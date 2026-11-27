@@ -4,7 +4,14 @@
   "description": "Music for every moment",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#11131a",
-  "theme_color": "#6757d9",
-  "icons": []
+  "background_color": "#0c0d12",
+  "theme_color": "#0c0d12",
+  "icons": [
+    {
+      "src": "/stream-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
 }

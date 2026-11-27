@@ -6,7 +6,7 @@ A modern music streaming web application built with React, TypeScript, and Vite.
 
 - Music discovery and search interface
 - Persistent bottom audio player
-- JioSaavn API integration support
+- Music catalog API integration support
 - Media Session metadata for browser and in-car playback
 - Theme and visualizer-ready UI
 - Responsive desktop and mobile layout
