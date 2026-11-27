@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import './App.css'
 
 type Song = {
@@ -33,6 +34,13 @@ function JioStream() {
   const [volume, setVolume] = useState(75)
   const [searching, setSearching] = useState(false)
   const [activeNav, setActiveNav] = useState('Home')
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [accountName, setAccountName] = useState(() => localStorage.getItem('stream-account') || '')
+  const [email, setEmail] = useState('')
+  const [visualizerMode, setVisualizerMode] = useState<'bars' | 'ring' | 'off'>('bars')
+  const [mood, setMood] = useState('Romance')
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [castSession, setCastSession] = useState<any>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
 
   const cleanSong = (item: any): Song => {
@@ -80,6 +88,31 @@ function JioStream() {
   }, [])
 
   useEffect(() => {
+    const script = document.createElement('script')
+    script.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1'
+    script.async = true
+    document.head.appendChild(script)
+    return () => { script.remove() }
+  }, [])
+
+  const normalizeSearch = (value: string) => {
+    const corrections: Record<string, string> = {
+      kesriya: 'kesariya', kesaria: 'kesariya', arjit: 'arijit singh', arjith: 'arijit singh',
+      caleya: 'chaleya', heerye: 'heeriye', appna: 'apna bana le', terewaste: 'tere vaaste',
+      bolywood: 'bollywood', punjabi: 'punjabi', romanoce: 'romance', romantc: 'romance',
+    }
+    const cleaned = value.toLowerCase().trim().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
+    return corrections[cleaned] || cleaned
+  }
+
+  const updateSuggestions = (value: string) => {
+    setQuery(value)
+    const seed = ['Arijit Singh', 'Kesariya', 'Chaleya', 'Apna Bana Le', 'Heeriye', 'Tere Vaaste', 'Bollywood Hits', 'Romantic Songs']
+    if (!value.trim()) setSuggestions([])
+    else setSuggestions(seed.filter((item) => item.toLowerCase().includes(value.toLowerCase()) || item.toLowerCase().includes(normalizeSearch(value))))
+  }
+
+  useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume / 100
   }, [volume])
 
@@ -96,12 +129,15 @@ function JioStream() {
 
   const search = async (value: string) => {
     if (!value.trim()) return
+    const corrected = normalizeSearch(value)
+    setQuery(corrected)
+    setSuggestions([])
     setSearching(true)
     setActiveNav('Search')
     try {
       const [songResponse, albumResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(value)}&limit=24`),
-        fetch(`${API_BASE}/api/search/albums?query=${encodeURIComponent(value)}&limit=12`),
+        fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(corrected)}&limit=24`),
+        fetch(`${API_BASE}/api/search/albums?query=${encodeURIComponent(corrected)}&limit=12`),
       ])
       const songData = await songResponse.json()
       const albumData = await albumResponse.json()
@@ -150,7 +186,43 @@ function JioStream() {
 
   const openAlbum = async (album: AlbumItem) => {
     setQuery(album.title)
-    await search(album.title)
+    setSearching(true)
+    try {
+      const response = await fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(album.title)}&limit=12`)
+      const data = await response.json()
+      const albumSongs = (data?.data?.results || []).map(cleanSong)
+      if (albumSongs.length) {
+        setSongs(albumSongs)
+        playSong(albumSongs[0])
+      }
+    } catch {
+      setSongs([])
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const startCast = async () => {
+    const chromeCast = (window as any).chrome?.cast
+    const castFramework = (window as any).cast?.framework
+    if (!chromeCast || !castFramework) {
+      alert('Chrome Cast unavailable. Open Stream in Chrome and use a Cast-enabled device.')
+      return
+    }
+    try {
+      const context = castFramework.CastContext.getInstance()
+      context.setOptions({ receiverApplicationId: castFramework.CastContext.DEFAULT_RECEIVER_APP_ID, autoJoinPolicy: castFramework.AutoJoinPolicy.ORIGIN_SCOPED })
+      await context.requestSession()
+      setCastSession(context.getCurrentSession())
+      if (context.getCurrentSession() && current.url) {
+        const mediaInfo = new castFramework.RemotePlayerMediaInfo(current.url, 'audio/mpeg')
+        const loadRequest = new castFramework.LoadRequestData()
+        loadRequest.media = mediaInfo
+        context.getCurrentSession().loadMedia(loadRequest)
+      }
+    } catch {
+      setCastSession(null)
+    }
   }
 
   const next = () => {
@@ -203,9 +275,12 @@ function JioStream() {
 
       <main className="js-main">
         <header className="js-header">
-          <label className="js-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && search(query)} placeholder="Search" /></label>
+          <div className="js-search-wrap">
+            <label className="js-search"><span>⌕</span><input value={query} onChange={(event) => updateSuggestions(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && search(query)} placeholder="Search songs, albums, artists" /></label>
+            {suggestions.length > 0 && <div className="js-suggestions">{suggestions.slice(0, 6).map((suggestion) => <button key={suggestion} onClick={() => search(suggestion)}>⌕ &nbsp; {suggestion}</button>)}</div>}
+          </div>
           <button className="js-language">English</button>
-          <button className="js-user-avatar">AK</button>
+          <button className="js-user-avatar" onClick={() => setLoginOpen(true)}>{accountName ? accountName.slice(0, 2).toUpperCase() : 'Login'}</button>
         </header>
 
         {activeNav === 'Home' ? (
@@ -293,6 +368,16 @@ function JioStream() {
             )}
           </section>
         )}
+
+        <section className="js-mood-bar">
+          <div><span>MOOD & SINGER</span><h2>Made for {mood}</h2></div>
+          <div className="js-moods">
+            {['Romance', 'Happy', 'Sad', 'Party', 'Workout', 'Chill'].map((item) => <button key={item} className={mood === item ? 'active' : ''} onClick={() => { setMood(item); void search(`${item} hindi songs`) }}>{item}</button>)}
+          </div>
+          <div className="js-singer-chips">
+            {['Arijit Singh', 'Pritam', 'Shreya Ghoshal', 'Neha Kakkar', 'Atif Aslam'].map((singer) => <button key={singer} onClick={() => search(singer)}>♬ &nbsp; {singer}</button>)}
+          </div>
+        </section>
       </main>
 
       <footer className="js-player">
@@ -301,10 +386,38 @@ function JioStream() {
           <div className="js-controls"><button onClick={previous}>‹</button><button className="main" onClick={togglePlay}>{playing ? 'Ⅱ' : '▶'}</button><button onClick={next}>›</button></div>
           <div className="js-timeline"><span>{formatTime(progress / 100 * current.duration)}</span><input type="range" min="0" max="100" value={progress} onChange={(event) => seek(Number(event.target.value))} /><span>{formatTime(current.duration)}</span></div>
         </div>
-        <div className="js-tools"><button title="Cast">▣</button><span>♪</span><input type="range" min="0" max="100" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
+        <div className="js-tools">
+          <button title="Cast" className={castSession ? 'casting' : ''} onClick={startCast}>▣</button>
+          <button title="Visualizer settings" onClick={() => setVisualizerMode(visualizerMode === 'bars' ? 'ring' : visualizerMode === 'ring' ? 'off' : 'bars')}>≋</button>
+          <span>♪</span><input type="range" min="0" max="100" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
+        </div>
       </footer>
 
-      <audio ref={audioRef} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onTimeUpdate={(event) => setProgress((event.currentTarget.currentTime / (event.currentTarget.duration || current.duration)) * 100)} onEnded={next} />
+      {loginOpen && (
+        <div className="js-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setLoginOpen(false) }}>
+          <div className="js-login-modal">
+            <button className="js-modal-close" onClick={() => setLoginOpen(false)}>×</button>
+            <div className="js-login-logo">J</div>
+            <h2>Welcome to Stream</h2>
+            <p>Sign in to save playlists and liked songs.</p>
+            <label>Name<input value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="Your name" /></label>
+            <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="name@example.com" /></label>
+            <button className="js-login-submit" onClick={() => { if (accountName.trim()) { localStorage.setItem('stream-account', accountName.trim()); setLoginOpen(false) } }}>Continue</button>
+            <div className="js-login-divider"><span>or</span></div>
+            <button className="js-google" onClick={() => setLoginOpen(false)}>G &nbsp; Continue with Google</button>
+          </div>
+        </div>
+      )}
+
+      {visualizerMode !== 'off' && <div className={`js-visualizer ${visualizerMode}`}>{Array.from({ length: 36 }).map((_, index) => <i key={index} style={{ '--i': index } as CSSProperties} />)}</div>}
+
+      <audio
+        ref={audioRef}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onTimeUpdate={(event) => setProgress((event.currentTarget.currentTime / (event.currentTarget.duration || current.duration)) * 100)}
+        onEnded={next}
+      />
     </div>
   )
 }
