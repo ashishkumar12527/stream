@@ -1,0 +1,10 @@
+{
+  "name": "Stream",
+  "short_name": "Stream",
+  "description": "Music for every moment",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#11131a",
+  "theme_color": "#6757d9",
+  "icons": []
+}
