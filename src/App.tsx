@@ -22,7 +22,7 @@ const seedSongs: Song[] = [
   { id: '5', name: 'Tere Vaaste', artist: 'Varun Jain, Sachin-Jigar', album: 'Zara Hatke Zara Bachke', image: 'https://c.saavncdn.com/460/Zara-Hatke-Zara-Bachke-Hindi-2023-20230519135215-500x500.jpg', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3', duration: 226 },
 ]
 
-const API_BASE = 'https://saavn.sumit.co'
+const API_BASE = 'https://saavan.ashishkumar12527.online'
 
 type AlbumItem = { id: string; title: string; artist: string; image: string; year: string }
 type PlaylistItem = { id: string; title: string; image: string; songCount: number; officialUrl?: string }
