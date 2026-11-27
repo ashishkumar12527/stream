@@ -185,7 +185,17 @@ function JioStream() {
           {[
             ['Home', '⌂'], ['Browse', '⊞'], ['Radio', '◉'], ['Podcasts', '◌'], ['Search', '⌕'], ['Library', '▰']
           ].map(([label, icon]) => (
-            <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => setActiveNav(label)}><span>{icon}</span>{label}</button>
+            <button
+              key={label}
+              className={activeNav === label ? 'active' : ''}
+              onClick={() => {
+                setActiveNav(label)
+                if (label === 'Search') setQuery(query || '')
+                if (label === 'Browse') void search(query || 'hindi')
+                if (label === 'Radio') void search(query || 'radio hits')
+                if (label === 'Library' || label === 'Podcasts') window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            ><span>{icon}</span>{label}</button>
           ))}
         </nav>
         <div className="js-user"><div>AK</div><span><b>Ashish Kumar</b><small>Free account</small></span></div>
@@ -198,46 +208,91 @@ function JioStream() {
           <button className="js-user-avatar">AK</button>
         </header>
 
-        <section className="js-hero">
-          <div className="js-hero-copy">
-            <span>YOUR DAILY MIX</span>
-            <h1>Music that feels<br />like you</h1>
-            <p>Discover songs, albums and artists handpicked for you.</p>
-            <button onClick={() => playSong(songs[0])}>▶ &nbsp; Play</button>
-          </div>
-          <div className="js-hero-art">
-            {current.image ? <img src={current.image} onError={(event) => { event.currentTarget.src = fallback }} alt="" /> : <img src={fallback} alt="" />}
-          </div>
-        </section>
+        {activeNav === 'Home' ? (
+          <>
+            <section className="js-hero">
+              <div className="js-hero-copy">
+                <span>YOUR DAILY MIX</span>
+                <h1>Music that feels<br />like you</h1>
+                <p>Discover songs, albums and artists handpicked for you.</p>
+                <button onClick={() => songs[0] && playSong(songs[0])}>▶ &nbsp; Play</button>
+              </div>
+              <div className="js-hero-art">
+                {current.image ? <img src={current.image} onError={(event) => { event.currentTarget.src = fallback }} alt="" /> : <img src={fallback} alt="" />}
+              </div>
+            </section>
 
-        <section className="js-section">
-          <div className="js-section-title"><div><span>Charts</span><h2>Trending Now</h2></div><button onClick={() => search(query || 'bollywood')}>See all</button></div>
-          {searching && <div className="js-loading">Loading from JioSaavn…</div>}
-          <div className="js-songs">
-            {songs.slice(0, 12).map((song, index) => (
-              <article className="js-song" key={`${song.id}-${index}`}>
-                <div className="js-cover">
-                  <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={song.name} />
-                  <button onClick={() => current.id === song.id ? togglePlay() : playSong(song)}>{current.id === song.id && playing ? 'Ⅱ' : '▶'}</button>
-                </div>
-                <h3>{song.name}</h3>
-                <p>{song.artist}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+            <section className="js-section">
+              <div className="js-section-title"><div><span>Charts</span><h2>Trending Now</h2></div><button onClick={() => search(query || 'bollywood')}>See all</button></div>
+              {searching && <div className="js-loading">Loading from JioSaavn…</div>}
+              <div className="js-songs">
+                {songs.slice(0, 12).map((song, index) => (
+                  <article className="js-song" key={`${song.id}-${index}`}>
+                    <div className="js-cover"><img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={song.name} /><button onClick={() => current.id === song.id ? togglePlay() : playSong(song)}>{current.id === song.id && playing ? 'Ⅱ' : '▶'}</button></div>
+                    <h3>{song.name}</h3><p>{song.artist}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
 
-        <section className="js-section js-albums-section">
-          <div className="js-section-title"><div><span>Collections</span><h2>Popular Albums</h2></div></div>
-          <div className="js-albums">
-            {albums.slice(0, 8).map((album) => (
-              <article className="js-album" key={album.id} onClick={() => openAlbum(album)}>
-                <div><img src={album.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={album.title} /><button>▶</button></div>
-                <h3>{album.title}</h3><p>{album.artist}{album.year ? ` • ${album.year}` : ''}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+            <section className="js-section js-albums-section">
+              <div className="js-section-title"><div><span>Collections</span><h2>Popular Albums</h2></div></div>
+              <div className="js-albums">
+                {albums.slice(0, 8).map((album) => (
+                  <article className="js-album" key={album.id} onClick={() => openAlbum(album)}>
+                    <div><img src={album.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={album.title} /><button>▶</button></div>
+                    <h3>{album.title}</h3><p>{album.artist}{album.year ? ` • ${album.year}` : ''}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </>
+        ) : (
+          <section className="js-page-view">
+            <div className="js-page-heading">
+              <span>{activeNav === 'Library' ? 'YOUR COLLECTION' : activeNav === 'Podcasts' ? 'SHOWS & EPISODES' : 'DISCOVER'}</span>
+              <h1>{activeNav}</h1>
+              <p>{activeNav === 'Radio' ? 'Live-style stations from your favourite moods and artists.' : activeNav === 'Podcasts' ? 'Browse podcasts and spoken-word shows.' : activeNav === 'Library' ? 'Quick access to your liked songs and albums.' : 'Explore music, albums, artists and playlists.'}</p>
+            </div>
+
+            {activeNav === 'Radio' && (
+              <div className="js-radio-grid">
+                {['Hindi Hits', 'Romance', 'Party', 'Arijit Singh', 'Bollywood 90s', 'Chill'].map((station, index) => (
+                  <button key={station} onClick={() => search(station)}><span>◉</span><b>{station}</b><small>Radio • {index + 1} stations</small></button>
+                ))}
+              </div>
+            )}
+
+            {activeNav === 'Browse' && (
+              <div className="js-category-grid">
+                {['Hindi', 'English', 'Punjabi', 'Romance', 'Party', 'Devotional', 'Indie', 'Retro'].map((category) => (
+                  <button key={category} onClick={() => search(category)}><span>{category.slice(0, 2).toUpperCase()}</span><b>{category}</b></button>
+                ))}
+              </div>
+            )}
+
+            {activeNav === 'Library' && (
+              <div className="js-library-grid">
+                <button onClick={() => search('bollywood')}><span>♥</span><b>Liked Songs</b><small>{songs.length} songs</small></button>
+                <button onClick={() => search('hindi albums')}><span>▰</span><b>Recently Played</b><small>Continue listening</small></button>
+                <button onClick={() => search('hindi')}><span>＋</span><b>My Albums</b><small>{albums.length} saved</small></button>
+              </div>
+            )}
+
+            {activeNav === 'Podcasts' && (
+              <div className="js-category-grid podcast-grid">
+                {['True Crime', 'Comedy', 'Technology', 'Business', 'Bollywood', 'Meditation'].map((category, index) => (
+                  <button key={category} onClick={() => search(category)}><span>{String(index + 1).padStart(2, '0')}</span><b>{category}</b></button>
+                ))}
+              </div>
+            )}
+
+            {searching && <div className="js-loading">Loading from JioSaavn…</div>}
+            {(activeNav === 'Search' || activeNav === 'Browse' || activeNav === 'Radio') && (
+              <><div className="js-section-title"><div><span>Results</span><h2>{query ? `Search: ${query}` : 'Explore Music'}</h2></div></div><div className="js-songs">{songs.slice(0, 12).map((song, index) => (<article className="js-song" key={`${song.id}-${index}`}><div className="js-cover"><img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={song.name} /><button onClick={() => current.id === song.id ? togglePlay() : playSong(song)}>{current.id === song.id && playing ? 'Ⅱ' : '▶'}</button></div><h3>{song.name}</h3><p>{song.artist}</p></article>))}</div></>
+            )}
+          </section>
+        )}
       </main>
 
       <footer className="js-player">
