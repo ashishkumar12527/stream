@@ -19,89 +19,106 @@ const seedSongs: Song[] = [
   { id: '5', name: 'Tere Vaaste', artist: 'Varun Jain, Sachin-Jigar', album: 'Zara Hatke Zara Bachke', image: 'https://c.saavncdn.com/460/Zara-Hatke-Zara-Bachke-Hindi-2023-20230519135215-500x500.jpg', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3', duration: 226 },
 ]
 
-const formatTime = (seconds: number) => {
-  if (!Number.isFinite(seconds)) return '0:00'
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
-}
+const API_BASE = 'https://saavan.ashishkumar12527.online'
 
-function App() {
-  const [theme, setTheme] = useState<'midnight' | 'sunset' | 'ocean'>('midnight')
+type AlbumItem = { id: string; title: string; artist: string; image: string; year: string }
+
+function JioStream() {
   const [songs, setSongs] = useState<Song[]>(seedSongs)
+  const [albums, setAlbums] = useState<AlbumItem[]>([])
   const [current, setCurrent] = useState<Song>(seedSongs[0])
   const [query, setQuery] = useState('')
   const [playing, setPlaying] = useState(false)
-  const [volume, setVolume] = useState(70)
   const [progress, setProgress] = useState(0)
-  const [mode, setMode] = useState<'Music' | 'Video'>('Music')
-  const [loading, setLoading] = useState(false)
-  const [liked, setLiked] = useState<string[]>([])
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [volume, setVolume] = useState(75)
+  const [searching, setSearching] = useState(false)
+  const [activeNav, setActiveNav] = useState('Home')
   const audioRef = useRef<HTMLAudioElement>(null)
-  const bars = Array.from({ length: 42 }, (_, i) => i)
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-  }, [theme])
-
-  useEffect(() => {
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: current.name,
-        artist: current.artist,
-        album: current.album,
-        artwork: [{ src: current.image, sizes: '500x500', type: 'image/jpeg' }],
-      })
-      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
-      navigator.mediaSession.setActionHandler('play', () => void togglePlay(true))
-      navigator.mediaSession.setActionHandler('pause', () => void togglePlay(false))
-      navigator.mediaSession.setActionHandler('previoustrack', previous)
-      navigator.mediaSession.setActionHandler('nexttrack', next)
+  const cleanSong = (item: any): Song => {
+    const images = item.image || []
+    const downloads = item.downloadUrl || []
+    return {
+      id: item.id,
+      name: item.name?.replace(/&amp;/g, '&') || item.title || 'Unknown song',
+      artist: item.primaryArtists || item.artists?.primary?.map((artist: any) => artist.name).join(', ') || 'Various Artists',
+      album: item.album?.name || item.album || 'Unknown Album',
+      image: images.find((image: any) => image.quality === '500x500')?.url || images.at(-1)?.url || '',
+      url: downloads.find((audio: any) => audio.quality === '320kbps')?.url || downloads.at(-1)?.url || '',
+      duration: Number(item.duration) || 180,
     }
-  }, [current, playing])
+  }
+
+  const loadHome = async () => {
+    setSearching(true)
+    try {
+      const [songResponse, albumResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/search/songs?query=bollywood&limit=16`),
+        fetch(`${API_BASE}/api/search/albums?query=hindi&limit=12`),
+      ])
+      const songData = await songResponse.json()
+      const albumData = await albumResponse.json()
+      const songResults = (songData?.data?.results || []).map(cleanSong)
+      const albumResults = (albumData?.data?.results || []).map((item: any) => ({
+        id: item.id,
+        title: item.name || item.title,
+        artist: item.artists?.primary?.map((artist: any) => artist.name).join(', ') || item.language || 'Various Artists',
+        image: item.image?.find((image: any) => image.quality === '500x500')?.url || item.image?.at(-1)?.url || '',
+        year: String(item.year || ''),
+      }))
+      if (songResults.length) setSongs(songResults)
+      setAlbums(albumResults)
+    } catch {
+      setAlbums([])
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadHome()
+  }, [])
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume / 100
   }, [volume])
 
-  const search = async (value = query) => {
-    if (!value.trim()) return
-    setLoading(true)
-    try {
-      const response = await fetch(`https://saavan.ashishkumar12527.online/api/search/songs?query=${encodeURIComponent(value)}&limit=12`)
-      if (!response.ok) throw new Error('Search unavailable')
-      const data = await response.json()
-      const results: Song[] = (data?.data?.results || []).map((item: any) => ({
-        id: item.id,
-        name: item.name?.replace(/&amp;/g, '&') || 'Unknown song',
-        artist: item.primaryArtists || item.artists?.primary?.map((a: any) => a.name).join(', ') || item.artists?.all?.map((a: any) => a.name).join(', ') || 'Unknown artist',
-        album: item.album?.name || 'Single',
-        image: item.image?.find((image: any) => image.quality === '500x500')?.url || item.image?.[item.image.length - 1]?.url || '',
-        url: item.downloadUrl?.find((audio: any) => audio.quality === '320kbps')?.url || item.downloadUrl?.[item.downloadUrl.length - 1]?.url || '',
-        duration: Number(item.duration) || 180,
-      }))
-      if (results.length) setSongs(results)
-    } catch {
-      setSongs(seedSongs.filter((song) => `${song.name} ${song.artist}`.toLowerCase().includes(value.toLowerCase())))
-    } finally {
-      setLoading(false)
-    }
-  }
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: current.name,
+      artist: current.artist,
+      album: current.album,
+      artwork: current.image ? [{ src: current.image, sizes: '500x500', type: 'image/jpeg' }] : [],
+    })
+    navigator.mediaSession.playbackState = playing ? 'playing' : 'paused'
+  }, [current, playing])
 
-  const togglePlay = async (nextState = !playing) => {
-    const audio = audioRef.current
-    if (!audio) return
-    if (nextState) {
-      if (!audio.src && current.url) audio.src = current.url
-      try {
-        await audio.play()
-        setPlaying(true)
-      } catch {
-        setPlaying(false)
-      }
-    } else {
-      audio.pause()
-      setPlaying(false)
+  const search = async (value: string) => {
+    if (!value.trim()) return
+    setSearching(true)
+    setActiveNav('Search')
+    try {
+      const [songResponse, albumResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(value)}&limit=24`),
+        fetch(`${API_BASE}/api/search/albums?query=${encodeURIComponent(value)}&limit=12`),
+      ])
+      const songData = await songResponse.json()
+      const albumData = await albumResponse.json()
+      const songResults = (songData?.data?.results || []).map(cleanSong)
+      const albumResults = (albumData?.data?.results || []).map((item: any) => ({
+        id: item.id,
+        title: item.name || item.title,
+        artist: item.artists?.primary?.map((artist: any) => artist.name).join(', ') || item.language || 'Various Artists',
+        image: item.image?.find((image: any) => image.quality === '500x500')?.url || item.image?.at(-1)?.url || '',
+        year: String(item.year || ''),
+      }))
+      if (songResults.length) setSongs(songResults)
+      setAlbums(albumResults)
+    } catch {
+      setSongs([])
+    } finally {
+      setSearching(false)
     }
   }
 
@@ -109,149 +126,132 @@ function App() {
     setCurrent(song)
     setProgress(0)
     const audio = audioRef.current
-    if (song.url && audio) {
-      if (audio.src !== song.url) {
-        audio.pause()
-        audio.src = song.url
-        audio.load()
-      }
-      audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
-    } else {
-      setPlaying(false)
+    if (!audio || !song.url) return
+    if (audio.src !== song.url) {
+      audio.src = song.url
+      audio.load()
     }
+    void audio.play().catch(() => setPlaying(false))
+  }
+
+  const togglePlay = async () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (!audio.src) {
+      playSong(current)
+      return
+    }
+    if (audio.paused) {
+      await audio.play().catch(() => undefined)
+    } else {
+      audio.pause()
+    }
+  }
+
+  const openAlbum = async (album: AlbumItem) => {
+    setQuery(album.title)
+    await search(album.title)
   }
 
   const next = () => {
     const index = songs.findIndex((song) => song.id === current.id)
-    playSong(songs[(index + 1) % songs.length])
+    if (songs.length) playSong(songs[(index + 1 + songs.length) % songs.length])
   }
 
   const previous = () => {
     const index = songs.findIndex((song) => song.id === current.id)
-    playSong(songs[(index - 1 + songs.length) % songs.length])
-  }
-
-  const cast = () => {
-    if (!(window as any).chrome?.cast) {
-      alert('Chrome Cast is available in supported Chrome browsers. Open this page in Chrome and try again.')
-      return
-    }
+    if (songs.length) playSong(songs[(index - 1 + songs.length) % songs.length])
   }
 
   const seek = (value: number) => {
     setProgress(value)
-    const audio = audioRef.current
-    if (audio?.duration) audio.currentTime = (value / 100) * audio.duration
+    if (audioRef.current?.duration) audioRef.current.currentTime = (value / 100) * audioRef.current.duration
   }
 
-  const duration = current.duration
+  const formatTime = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
+    const minutes = Math.floor(seconds / 60)
+    const remainder = Math.floor(seconds % 60)
+    return `${minutes}:${remainder.toString().padStart(2, '0')}`
+  }
 
-  const artworkFallback = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500"%3E%3Cdefs%3E%3ClinearGradient id="g" x2="1" y2="1"%3E%3Cstop stop-color="%236757d9"/%3E%3Cstop offset="1" stop-color="%23e66c63"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width="500" height="500" fill="url(%23g)"/%3E%3Ccircle cx="250" cy="250" r="105" fill="none" stroke="white" stroke-width="18" opacity=".9"/%3E%3Ccircle cx="250" cy="250" r="25" fill="white"/%3E%3C/svg%3E'
+  const fallback = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="500" height="500"%3E%3Crect width="500" height="500" fill="%232d2d36"/%3E%3Ccircle cx="250" cy="250" r="120" fill="none" stroke="%23ec3b6a" stroke-width="18"/%3E%3Ccircle cx="250" cy="250" r="32" fill="%23ec3b6a"/%3E%3C/svg%3E'
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">S</span><span>Stream</span></div>
+    <div className="js-app">
+      <aside className="js-sidebar">
+        <div className="js-logo"><span>J</span><b>Stream</b></div>
         <nav>
-          <button className="nav-item active"><span>⌂</span> Home</button>
-          <button className="nav-item"><span>⌕</span> Search</button>
-          <button className="nav-item"><span>♬</span> Library</button>
+          {[
+            ['Home', '⌂'], ['Browse', '⊞'], ['Radio', '◉'], ['Podcasts', '◌'], ['Search', '⌕'], ['Library', '▰']
+          ].map(([label, icon]) => (
+            <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => setActiveNav(label)}><span>{icon}</span>{label}</button>
+          ))}
         </nav>
-        <div className="side-section">
-          <p>Playlists</p>
-          <button>♥ &nbsp; Liked Songs</button>
-          <button>♪ &nbsp; My Playlist</button>
-          <button>☁ &nbsp; Downloaded</button>
-        </div>
+        <div className="js-user"><div>AK</div><span><b>Ashish Kumar</b><small>Free account</small></span></div>
       </aside>
 
-      <main className="main-content">
-        <header className="topbar">
-          <div className="search-box">
-            <span>⌕</span>
-            <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="Search songs, albums, artists" />
-          </div>
-          <div className="mode-switch">
-            {(['Music', 'Video'] as const).map((item) => <button key={item} className={mode === item ? 'selected' : ''} onClick={() => setMode(item)}>{item}</button>)}
-          </div>
-          <button className="avatar" onClick={() => setMenuOpen(!menuOpen)}>AK</button>
-          {menuOpen && <div className="profile-menu"><button>Profile</button><button>Settings</button></div>}
+      <main className="js-main">
+        <header className="js-header">
+          <label className="js-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && search(query)} placeholder="Search" /></label>
+          <button className="js-language">English</button>
+          <button className="js-user-avatar">AK</button>
         </header>
 
-        <section className="hero-card">
-          <div className="hero-copy">
-            <span className="eyebrow">Recommended for you</span>
-            <h1>Feel the sound.<br />Live the moment.</h1>
-            <p>Discover trending music and hand-picked favourites.</p>
-            <button className="play-hero" onClick={() => current.id === songs[0]?.id && current.url ? togglePlay(!playing) : playSong(songs[0])}>{playing ? '▮▮' : '▶'} &nbsp; {playing ? 'Pause' : 'Play Now'}</button>
+        <section className="js-hero">
+          <div className="js-hero-copy">
+            <span>YOUR DAILY MIX</span>
+            <h1>Music that feels<br />like you</h1>
+            <p>Discover songs, albums and artists handpicked for you.</p>
+            <button onClick={() => playSong(songs[0])}>▶ &nbsp; Play</button>
           </div>
-          <div className="hero-art">
-            <div className="visualizer hero-bars">
-              {bars.map((bar) => <i key={bar} style={{ height: `${22 + ((bar * 13) % 78)}%`, animationDelay: `${(bar % 8) * -0.11}s` }} />)}
-            </div>
-            {current.image ? <img src={current.image} alt="Now playing artwork" /> : <div className="art-fallback" style={{ backgroundImage: `url(${artworkFallback})` }}>S</div>}
+          <div className="js-hero-art">
+            {current.image ? <img src={current.image} onError={(event) => { event.currentTarget.src = fallback }} alt="" /> : <img src={fallback} alt="" />}
           </div>
         </section>
 
-        <section className="section-head">
-          <div><span>Made for you</span><h2>{query ? `Results for “${query}”` : 'Trending now'}</h2></div>
-          <button onClick={() => search(query || 'Bollywood')}>View all</button>
+        <section className="js-section">
+          <div className="js-section-title"><div><span>Charts</span><h2>Trending Now</h2></div><button onClick={() => search(query || 'bollywood')}>See all</button></div>
+          {searching && <div className="js-loading">Loading from JioSaavn…</div>}
+          <div className="js-songs">
+            {songs.slice(0, 12).map((song, index) => (
+              <article className="js-song" key={`${song.id}-${index}`}>
+                <div className="js-cover">
+                  <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={song.name} />
+                  <button onClick={() => current.id === song.id ? togglePlay() : playSong(song)}>{current.id === song.id && playing ? 'Ⅱ' : '▶'}</button>
+                </div>
+                <h3>{song.name}</h3>
+                <p>{song.artist}</p>
+              </article>
+            ))}
+          </div>
         </section>
 
-        {loading && <div className="loading">Searching JioSaavn…</div>}
-        <div className="song-grid">
-          {songs.slice(0, 8).map((song, index) => (
-            <article className={`song-card ${current.id === song.id ? 'is-current' : ''}`} key={song.id} onDoubleClick={() => playSong(song)}>
-              <div className="cover">
-                {song.image ? <img src={song.image} alt={song.name} /> : <div className="art-fallback" style={{ backgroundImage: `url(${artworkFallback})` }}>♪</div>}
-                <button className="card-play" onClick={() => current.id === song.id ? togglePlay(!playing) : playSong(song)}>{current.id === song.id && playing ? '▮▮' : '▶'}</button>
-                <span className="rank">{String(index + 1).padStart(2, '0')}</span>
-              </div>
-              <h3>{song.name}</h3>
-              <p>{song.artist}</p>
-            </article>
-          ))}
-        </div>
-
-        <section className="theme-panel">
-          <div><span>Appearance</span><h2>Choose your mood</h2></div>
-          <div className="theme-options">
-            {(['midnight', 'sunset', 'ocean'] as const).map((item) => <button key={item} className={theme === item ? 'active' : ''} onClick={() => setTheme(item)}><i className={item} />{item}</button>)}
+        <section className="js-section js-albums-section">
+          <div className="js-section-title"><div><span>Collections</span><h2>Popular Albums</h2></div></div>
+          <div className="js-albums">
+            {albums.slice(0, 8).map((album) => (
+              <article className="js-album" key={album.id} onClick={() => openAlbum(album)}>
+                <div><img src={album.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={album.title} /><button>▶</button></div>
+                <h3>{album.title}</h3><p>{album.artist}{album.year ? ` • ${album.year}` : ''}</p>
+              </article>
+            ))}
           </div>
         </section>
       </main>
 
-      <footer className="player">
-        <div className="now-playing">
-          {current.image ? <img src={current.image} alt="" /> : <div className="mini-art" style={{ backgroundImage: `url(${artworkFallback})` }}>S</div>}
-          <div><h3>{current.name}</h3><p>{current.artist}</p></div>
-          <button className={liked.includes(current.id) ? 'liked' : ''} onClick={() => setLiked((items) => items.includes(current.id) ? items.filter((id) => id !== current.id) : [...items, current.id])}>♥</button>
+      <footer className="js-player">
+        <div className="js-now"><img src={current.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" /><div><h3>{current.name}</h3><p>{current.artist}</p></div><button>♥</button></div>
+        <div className="js-player-center">
+          <div className="js-controls"><button onClick={previous}>‹</button><button className="main" onClick={togglePlay}>{playing ? 'Ⅱ' : '▶'}</button><button onClick={next}>›</button></div>
+          <div className="js-timeline"><span>{formatTime(progress / 100 * current.duration)}</span><input type="range" min="0" max="100" value={progress} onChange={(event) => seek(Number(event.target.value))} /><span>{formatTime(current.duration)}</span></div>
         </div>
-        <div className="player-center">
-          <div className="controls">
-            <button onClick={previous}>‹</button>
-            <button className="main-control" onClick={() => togglePlay()}>{playing ? '▮▮' : '▶'}</button>
-            <button onClick={next}>›</button>
-          </div>
-          <div className="timeline"><span>{formatTime(progress / 100 * duration)}</span><input aria-label="Track progress" type="range" min="0" max="100" value={progress} onChange={(e) => seek(Number(e.target.value))} /><span>{formatTime(duration)}</span></div>
-        </div>
-        <div className="player-tools">
-          <button onClick={cast} title="Cast">▣</button>
-          <button title="Queue">≡</button>
-          <span>♬</span><input aria-label="Volume" type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} />
-        </div>
+        <div className="js-tools"><button title="Cast">▣</button><span>♪</span><input type="range" min="0" max="100" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></div>
       </footer>
 
-      <audio
-        ref={audioRef}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={(event) => setProgress((event.currentTarget.currentTime / (event.currentTarget.duration || duration)) * 100)}
-        onError={() => setPlaying(false)}
-        onEnded={next}
-      />
+      <audio ref={audioRef} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onTimeUpdate={(event) => setProgress((event.currentTarget.currentTime / (event.currentTarget.duration || current.duration)) * 100)} onEnded={next} />
     </div>
   )
 }
 
-export default App
+export default JioStream
