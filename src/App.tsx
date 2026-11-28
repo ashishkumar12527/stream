@@ -27,6 +27,7 @@ const API_BASE = 'https://saavan.ashishkumar12527.online'
 type AlbumItem = { id: string; title: string; artist: string; image: string; year: string }
 type PlaylistItem = { id: string; title: string; image: string; songCount: number; officialUrl?: string }
 type WeatherDay = { date: string; code: number; low: number; high: number }
+type LocalAirQuality = { index: number; pm25: number | null; pm10: number | null }
 type LocalWeather = {
   location: string
   details: string
@@ -70,6 +71,15 @@ const weatherAnimation = (code: number) => {
   return 'rain'
 }
 
+const airQualityStatus = (index: number) => {
+  if (index <= 50) return { label: 'Good', tone: 'good' }
+  if (index <= 100) return { label: 'Moderate', tone: 'moderate' }
+  if (index <= 150) return { label: 'Sensitive groups', tone: 'sensitive' }
+  if (index <= 200) return { label: 'Unhealthy', tone: 'unhealthy' }
+  if (index <= 300) return { label: 'Very unhealthy', tone: 'very-unhealthy' }
+  return { label: 'Hazardous', tone: 'hazardous' }
+}
+
 function JioStream() {
   const [songs, setSongs] = useState<Song[]>(seedSongs)
   const [homeSongs, setHomeSongs] = useState<Song[]>([])
@@ -95,6 +105,9 @@ function JioStream() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('stream-theme') === 'dark')
   const [clockNow, setClockNow] = useState(() => new Date())
   const [localWeather, setLocalWeather] = useState<LocalWeather | null>(null)
+  const [airQuality, setAirQuality] = useState<LocalAirQuality | null>(null)
+  const [airQualityLoading, setAirQualityLoading] = useState(false)
+  const [airQualityError, setAirQualityError] = useState('')
   const [weatherLoading, setWeatherLoading] = useState(true)
   const [weatherError, setWeatherError] = useState('')
   const [loginOpen, setLoginOpen] = useState(false)
@@ -117,6 +130,7 @@ function JioStream() {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const visualizerRef = useRef<HTMLDivElement>(null)
+  const fullPlayerVisualizerRef = useRef<HTMLCanvasElement>(null)
   const detailRequestIdRef = useRef(0)
   const weatherRequestIdRef = useRef(0)
   const lastVolumeRef = useRef(75)
@@ -127,11 +141,19 @@ function JioStream() {
 
   useEffect(() => {
     if (!fullPlayerOpen) return
+    const previousBodyOverflow = document.body.style.overflow
+    const previousRootOverflow = document.documentElement.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setFullPlayerOpen(false)
     }
     window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape)
+      document.body.style.overflow = previousBodyOverflow
+      document.documentElement.style.overflow = previousRootOverflow
+    }
   }, [fullPlayerOpen])
 
   useEffect(() => {
@@ -167,14 +189,81 @@ function JioStream() {
     return () => cancelAnimationFrame(frame)
   }, [playing, visualizerMode, visualizerReady])
 
+  useEffect(() => {
+    const canvas = fullPlayerVisualizerRef.current
+    const analyser = analyserRef.current
+    if (!fullPlayerOpen || !playing || visualizerMode === 'off' || !visualizerReady || !canvas || !analyser) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      console.error('Unable to initialize the full-screen audio visualizer.')
+      return
+    }
+
+    const frequencies = new Uint8Array(analyser.frequencyBinCount)
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect()
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.width = Math.round(bounds.width * pixelRatio)
+      canvas.height = Math.round(bounds.height * pixelRatio)
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
+    }
+    let frame = 0
+
+    const draw = () => {
+      const { width, height } = canvas.getBoundingClientRect()
+      analyser.getByteFrequencyData(frequencies)
+      context.clearRect(0, 0, width, height)
+      context.save()
+      context.translate(width / 2, height / 2)
+      const radius = Math.min(width, height) * 0.43
+      const barCount = 72
+
+      for (let index = 0; index < barCount; index += 1) {
+        const firstBin = Math.floor(index * frequencies.length / barCount)
+        const lastBin = Math.max(firstBin + 1, Math.floor((index + 1) * frequencies.length / barCount))
+        let level = 0
+        for (let bin = firstBin; bin < lastBin; bin += 1) {
+          level = Math.max(level, frequencies[bin] / 255)
+        }
+        const angle = (index / barCount) * Math.PI * 2 - Math.PI / 2
+        const length = Math.min(1, level * 1.8) * Math.min(34, width * 0.1)
+        context.beginPath()
+        context.moveTo(Math.cos(angle) * radius, Math.sin(angle) * radius)
+        context.lineTo(Math.cos(angle) * (radius + length), Math.sin(angle) * (radius + length))
+        context.strokeStyle = `rgba(111, 224, 204, ${0.3 + level * 0.7})`
+        context.lineWidth = index % 3 === 0 ? 2 : 1.4
+        context.stroke()
+      }
+
+      context.restore()
+      frame = requestAnimationFrame(draw)
+    }
+
+    resize()
+    window.addEventListener('resize', resize)
+    draw()
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', resize)
+    }
+  }, [fullPlayerOpen, playing, visualizerMode, visualizerReady])
+
   const cleanSong = (item: any): Song => {
     const images = item.image || []
     const downloads = item.downloadUrl || []
+    const decodeText = (value: string) => value
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
     return {
       id: item.id,
-      name: item.name?.replace(/&amp;/g, '&') || item.title || 'Unknown song',
-      artist: item.primaryArtists || item.artists?.primary?.map((artist: any) => artist.name).join(', ') || 'Various Artists',
-      album: item.album?.name || item.album || 'Unknown Album',
+      name: decodeText(item.name || item.title || 'Unknown song'),
+      artist: decodeText(item.primaryArtists || item.artists?.primary?.map((artist: any) => artist.name).join(', ') || 'Various Artists'),
+      album: decodeText(item.album?.name || item.album || 'Unknown Album'),
       image: images.find((image: any) => image.quality === '500x500')?.url || images.at(-1)?.url || '',
       url: downloads.find((audio: any) => audio.quality === '320kbps')?.url || downloads.at(-1)?.url || '',
       officialUrl: typeof item.url === 'string' && item.url.startsWith('https://www.jiosaavn.com/') ? item.url : undefined,
@@ -186,21 +275,26 @@ function JioStream() {
     setSearching(true)
     setSearchError('')
     try {
-      const [playlistSearchResponse, albumResponse, playlistsResponse] = await Promise.all([
+      const [playlistSearchResponse, songSearchResponse, albumResponse, playlistsResponse] = await Promise.all([
         fetch(`${API_BASE}/api/search/playlists?query=latest%20hindi%20songs&limit=1`),
+        fetch(`${API_BASE}/api/search/songs?query=latest%20hindi%20songs&limit=50`),
         fetch(`${API_BASE}/api/search/albums?query=hindi&limit=12`),
         fetch(`${API_BASE}/api/search/playlists?query=hindi&limit=12`),
       ])
-      if (!playlistSearchResponse.ok || !albumResponse.ok || !playlistsResponse.ok) throw new Error('Home music request failed')
+      if (!playlistSearchResponse.ok || !songSearchResponse.ok || !albumResponse.ok || !playlistsResponse.ok) throw new Error('Home music request failed')
       const playlistSearchData = await playlistSearchResponse.json()
+      const songSearchData = await songSearchResponse.json()
       const albumData = await albumResponse.json()
       const playlistsData = await playlistsResponse.json()
       const latestPlaylist = playlistSearchData?.data?.results?.[0]
       if (!latestPlaylist?.id) throw new Error('Latest music playlist not found')
-      const playlistResponse = await fetch(`${API_BASE}/api/playlists?id=${encodeURIComponent(latestPlaylist.id)}`)
+      const playlistResponse = await fetch(`${API_BASE}/api/playlists?id=${encodeURIComponent(latestPlaylist.id)}&limit=50&page=1`)
       if (!playlistResponse.ok) throw new Error('Latest music playlist request failed')
       const playlistData = await playlistResponse.json()
-      const songResults = (playlistData?.data?.songs || []).map(cleanSong)
+      const songResults = [...(playlistData?.data?.songs || []), ...(songSearchData?.data?.results || [])]
+        .map(cleanSong)
+        .filter((song: Song, index: number, allSongs: Song[]) => allSongs.findIndex((candidate) => candidate.id === song.id) === index)
+        .slice(0, 51)
       if (!songResults.length) throw new Error('Latest music playlist is empty')
       const albumResults = (albumData?.data?.results || []).map((item: any) => ({
         id: item.id,
@@ -284,6 +378,42 @@ function JioStream() {
     return () => window.clearInterval(timer)
   }, [])
 
+  const loadAirQuality = async (latitude: number, longitude: number, requestId: number) => {
+    setAirQuality(null)
+    setAirQualityError('')
+    setAirQualityLoading(true)
+    const params = new URLSearchParams({
+      latitude: String(latitude),
+      longitude: String(longitude),
+      current: 'us_aqi,pm2_5,pm10',
+      timezone: 'auto',
+    })
+    try {
+      const response = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?${params}`)
+      if (requestId !== weatherRequestIdRef.current) return
+      if (!response.ok) throw new Error(`Air-quality service returned ${response.status}.`)
+      const data = await response.json()
+      const currentData = data?.current
+      const index = Number(currentData?.us_aqi)
+      if (currentData?.us_aqi === undefined || currentData?.us_aqi === null || !Number.isFinite(index)) {
+        throw new Error('Air-quality data was incomplete. Please try again.')
+      }
+      const pm25 = currentData.pm2_5
+      const pm10 = currentData.pm10
+      setAirQuality({
+        index,
+        pm25: typeof pm25 === 'number' && Number.isFinite(pm25) ? pm25 : null,
+        pm10: typeof pm10 === 'number' && Number.isFinite(pm10) ? pm10 : null,
+      })
+    } catch (error) {
+      if (requestId === weatherRequestIdRef.current) {
+        setAirQualityError(error instanceof Error ? error.message : 'Could not load air quality.')
+      }
+    } finally {
+      if (requestId === weatherRequestIdRef.current) setAirQualityLoading(false)
+    }
+  }
+
   const loadWeather = async (
     latitude: number,
     longitude: number,
@@ -292,6 +422,7 @@ function JioStream() {
   ) => {
     setWeatherLoading(true)
     setWeatherError('')
+    void loadAirQuality(latitude, longitude, requestId)
     const weatherParams = new URLSearchParams({
       latitude: String(latitude),
       longitude: String(longitude),
@@ -388,6 +519,9 @@ function JioStream() {
   const requestLocalWeather = () => {
     const requestId = ++weatherRequestIdRef.current
     setWeatherError('')
+    setAirQuality(null)
+    setAirQualityError('')
+    setAirQualityLoading(false)
     if (!navigator.geolocation) {
       setWeatherLoading(false)
       setWeatherError('This browser does not support device location.')
@@ -443,7 +577,7 @@ function JioStream() {
     setActiveNav(destination)
     try {
       const [songResponse, albumResponse, playlistResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(corrected)}&limit=24`),
+        fetch(`${API_BASE}/api/search/songs?query=${encodeURIComponent(corrected)}&limit=50`),
         fetch(`${API_BASE}/api/search/albums?query=${encodeURIComponent(corrected)}&limit=12`),
         fetch(`${API_BASE}/api/search/playlists?query=${encodeURIComponent(corrected)}&limit=12`),
       ])
@@ -758,16 +892,49 @@ function JioStream() {
   }
 
   const currentSongIndex = songs.findIndex((song) => song.id === current.id)
+  const queueSongs = songs.slice(0, 50)
   const upcomingSongs = songs.length > 1
-    ? Array.from({ length: Math.min(3, songs.length - 1) }, (_, index) => songs[(currentSongIndex + index + 1 + songs.length) % songs.length])
+    ? Array.from({ length: Math.min(50, songs.length - 1) }, (_, index) => songs[(currentSongIndex + index + 1 + songs.length) % songs.length])
     : []
+  const clockTime = new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h12',
+    timeZone: localWeather?.timezone,
+  }).format(clockNow)
+  const currentAirQualityStatus = airQuality ? airQualityStatus(airQuality.index) : null
+  const renderAirQualityCard = () => (
+    <div className={`js-air-quality-card${currentAirQualityStatus ? ` is-${currentAirQualityStatus.tone}` : ''}`} aria-label="Current air quality">
+      <div className="js-air-quality-main">
+        <span>US AQI</span>
+        <strong>{airQuality ? Math.round(airQuality.index) : airQualityLoading || weatherLoading ? '…' : '—'}</strong>
+        <b>{currentAirQualityStatus?.label || (airQualityLoading || weatherLoading ? 'Loading' : 'Unavailable')}</b>
+      </div>
+      {airQuality && (
+        <div className="js-air-quality-pollutants">
+          {airQuality.pm25 !== null && <span>PM2.5 <b>{airQuality.pm25.toFixed(1)}</b> <small>µg/m³</small></span>}
+          {airQuality.pm10 !== null && <span>PM10 <b>{airQuality.pm10.toFixed(1)}</b> <small>µg/m³</small></span>}
+        </div>
+      )}
+      {airQualityError && <p className="js-air-quality-error" role="alert">{airQualityError}</p>}
+    </div>
+  )
 
   const fallback = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="500" height="500"%3E%3Crect width="500" height="500" fill="%232d2d36"/%3E%3Ccircle cx="250" cy="250" r="120" fill="none" stroke="%23ec3b6a" stroke-width="18"/%3E%3Ccircle cx="250" cy="250" r="32" fill="%23ec3b6a"/%3E%3C/svg%3E'
 
   const renderSongCard = (song: Song, index: number, playlist: Song[] = songs) => (
-    <article className="js-song" key={`${song.id}-${index}`}>
+    <article
+      className={`js-song${current.id === song.id ? ' is-current' : ''}`}
+      key={`${song.id}-${index}`}
+      style={{ '--card-index': Math.min(index, 12) } as CSSProperties}
+    >
       <div className="js-cover">
         <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt={song.name} />
+        {current.id === song.id && playing && (
+          <span className="js-song-playing-indicator" aria-hidden="true">
+            <i /><i /><i /><i />
+          </span>
+        )}
         <button
           aria-label={current.id === song.id && playing ? `Pause ${song.name}` : `Play ${song.name}`}
           onClick={() => {
@@ -862,7 +1029,7 @@ function JioStream() {
               <div className="js-weather-clock">
                 <span className="js-weather-eyebrow">{accountName ? `WELCOME, ${accountName}` : 'WELCOME TO STREAM'}</span>
                 <time dateTime={clockNow.toISOString()} className="js-weather-time">
-                  {clockNow.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', timeZone: localWeather?.timezone }).split(/(:)/).map((part, index) => (
+                  {clockTime.split(/(:)/).map((part, index) => (
                     part === ':' ? <span className="js-weather-time-colon" key={index}>{part}</span> : part
                   ))}
                 </time>
@@ -901,6 +1068,7 @@ function JioStream() {
                       </div>
                     ))}
                   </div>
+                  {renderAirQualityCard()}
                   {localWeather.locationNote && <p className="js-weather-note">{localWeather.locationNote}</p>}
                   {weatherError && <p className="js-weather-error" role="alert">{weatherError}</p>}
                 </div>
@@ -908,12 +1076,13 @@ function JioStream() {
                 <div className="js-weather-prompt">
                   <div>
                     <strong>{weatherError ? 'Weather unavailable' : weatherLoading ? 'Finding your approximate location…' : 'See your local forecast'}</strong>
-                    <p>{weatherError ? 'Use precise device location or reload to retry the approximate lookup.' : 'Your public IP is used to estimate your location. It is sent to the location service; this app does not save it. A VPN may affect the estimate.'}</p>
+                    <p>{weatherError ? 'Use precise location or reload to retry weather and air-quality lookup.' : 'Weather and US AQI use your approximate location from public IP. It is sent to the location service; this app does not save it. A VPN may affect the estimate.'}</p>
                   </div>
                   <button onClick={requestLocalWeather} disabled={weatherLoading}>
                     {weatherLoading ? 'Finding location…' : 'Use precise location'}
                   </button>
                   {weatherError && <span className="js-weather-error" role="alert">{weatherError}</span>}
+                  {renderAirQualityCard()}
                 </div>
               )}
             </section>
@@ -1078,12 +1247,28 @@ function JioStream() {
             {['Arijit Singh', 'Pritam', 'Shreya Ghoshal', 'Neha Kakkar', 'Atif Aslam'].map((singer) => <button key={singer} onClick={() => search(singer)}>♬ &nbsp; {singer}</button>)}
           </div>
         </section>
+        <footer className="js-site-footer">
+          <div className="js-footer-credit">
+            <span className="js-footer-mark" aria-hidden="true">♪</span>
+            <div className="js-footer-credit-copy">
+              <span>MADE FOR EVERY MOMENT</span>
+              <p>Developed by <strong>Ashish Kumar</strong></p>
+            </div>
+          </div>
+          <div className="js-footer-meta">
+            <div className="js-footer-badges">
+              <span className="js-trial-badge"><i aria-hidden="true" />TRIAL RUNNING</span>
+              <span className="js-launch-badge">GOES LIVE <strong>1 DEC</strong></span>
+            </div>
+            <span className="js-footer-copyright">© {clockNow.getFullYear()} Stream</span>
+          </div>
+        </footer>
       </main>
 
       <aside className="js-queue">
-        <div className="js-queue-heading"><div><span>UP NEXT</span><h2>Queue</h2></div><b>{songs.length}</b></div>
+        <div className="js-queue-heading"><div><span>UP NEXT</span><h2>Queue</h2></div><b>{queueSongs.length}</b></div>
         <div className="js-queue-list">
-          {songs.slice(0, 12).map((song, index) => (
+          {queueSongs.map((song, index) => (
             <button className={current.id === song.id ? 'active' : ''} key={`${song.id}-${index}`} onClick={() => playSong(song, songs)}>
               <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" />
               <span><b>{song.name}</b><small>{song.artist}</small></span>
@@ -1145,33 +1330,38 @@ function JioStream() {
         <section className="js-full-player" role="dialog" aria-modal="true" aria-label="Now playing">
           <button className="js-full-player-close" aria-label="Close full-screen player" onClick={() => setFullPlayerOpen(false)}>×</button>
           <div className="js-full-player-layout">
-            <div className={`js-full-player-record${playing ? ' is-playing' : ''}`} aria-hidden="true">
-              <img src={current.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" />
-            </div>
-            <div className="js-full-player-info">
-              <span>NOW PLAYING</span>
-              <h1>{current.name}</h1>
-              <p>{current.artist}</p>
-              <small>{current.album}</small>
-              {current.officialUrl && <a href={current.officialUrl} target="_blank" rel="noopener noreferrer">Official listening options</a>}
-              <section className="js-full-player-up-next" aria-label="Up next">
-                <div className="js-full-player-up-next-heading">
-                  <span>UP NEXT</span>
-                  <small>{upcomingSongs.length ? `${upcomingSongs.length} tracks` : 'Queue complete'}</small>
+            <div className="js-full-player-current">
+              <div className="js-full-player-artwork">
+                <canvas ref={fullPlayerVisualizerRef} className="js-full-player-audio-ring" aria-hidden="true" />
+                <div className={`js-full-player-record${playing ? ' is-playing' : ''}`} aria-hidden="true">
+                  <img src={current.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" />
                 </div>
-                {upcomingSongs.length
-                  ? <div className="js-full-player-up-next-list">
-                    {upcomingSongs.map((song, index) => (
-                      <button key={`${song.id}-${index}`} onClick={() => playSong(song, songs)} aria-label={`Play ${song.name} next`}>
-                        <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" />
-                        <span><b>{song.name}</b><small>{song.artist}</small></span>
-                        <i aria-hidden="true">▶</i>
-                      </button>
-                    ))}
-                  </div>
-                  : <p className="js-full-player-up-next-empty">No upcoming tracks in this queue.</p>}
-              </section>
+              </div>
+              <div className="js-full-player-info">
+                <span>NOW PLAYING</span>
+                <h1>{current.name}</h1>
+                <p>{current.artist}</p>
+                <small>{current.album}</small>
+                {current.officialUrl && <a href={current.officialUrl} target="_blank" rel="noopener noreferrer">Official listening options</a>}
+              </div>
             </div>
+            <section className="js-full-player-up-next" aria-label="Up next">
+              <div className="js-full-player-up-next-heading">
+                <span>UP NEXT</span>
+                <small>{upcomingSongs.length ? `${upcomingSongs.length} tracks` : 'Queue complete'}</small>
+              </div>
+              {upcomingSongs.length
+                ? <div className="js-full-player-up-next-list">
+                  {upcomingSongs.map((song, index) => (
+                    <button key={`${song.id}-${index}`} onClick={() => playSong(song, songs)} aria-label={`Play ${song.name} next`}>
+                      <img src={song.image || fallback} onError={(event) => { event.currentTarget.src = fallback }} alt="" />
+                      <span><b>{song.name}</b><small>{song.artist}</small></span>
+                      <i aria-hidden="true">▶</i>
+                    </button>
+                  ))}
+                </div>
+                : <p className="js-full-player-up-next-empty">No upcoming tracks in this queue.</p>}
+            </section>
           </div>
           <div className="js-full-player-controls">
             <div className="js-full-player-timeline">
